@@ -1,0 +1,275 @@
+---
+title: "CC2 Rade De Brest"
+output: github_document
+---
+```{bash, eval=FALSE}
+sudo apt-get update -y
+sudo apt-get install -y libglpk-dev
+sudo apt-get install -y liblzma-dev libbz2-dev
+#sudo apt-get install libxtst6
+sudo apt-get install libxt6
+```
+
+#question a répondre : qu'elle est la contribution de la profondeur et de la saison dans la structuration des communautés micorbiennes planctoniques de la RADE Brest (station5)
+
+
+#charger toutes les librairies
+```{r}
+library(phyloseq)
+library(dada2)
+library(DECIPHER)
+library(phangorn)
+library(ggplot2)
+library(gridExtra)
+library(shiny)
+library(miniUI)
+library(caret)
+library(pls)
+library(e1071)
+library(ggplot2)
+library(randomForest)
+library(dplyr)
+library(ggrepel)
+#library(nlme)
+library(devtools)
+library(reshape2)
+library(PMA)
+#library(structSSI)
+library(ade4)
+library(ggnetwork)
+library(intergraph)
+library(scales)
+library(genefilter)
+library(impute)
+library(phyloseqGraphTest)
+library(Biostrings)
+```
+
+```{bash}
+wget pagesperso.univ-brest.fr/~maignien/teaching/M1-MFA/UE-Ecogenomique2/EcoG2_data_cc2.tar.gz
+tar xzvf EcoG2_data_cc2.tar.gz
+```
+
+```{bash}
+mkdir data
+```
+
+#créer variable miseq_path = variable pour aller dans le chemin de miseq, et lister les ficher qu'il y a dans miseq_pat
+```{r}
+path <- "data"
+list.files(path)
+```
+
+#créer nouv variables qui reçoivent tous les noms de fichiers qui se terminent par -R1 ou -R2 et les tries par ordre alphabetique
+```{r}
+fnFs <- sort(list.files(path, pattern="_R1", full.names = TRUE))
+fnRs <- sort(list.files(path, pattern="_R2", full.names = TRUE))
+sample.names <- sapply(strsplit(basename(fnFs), "_R"), `[`, 1)
+```
+
+#profils qualité des lectures : obtient graph
+```{r}
+plotQualityProfile(fnRs[1:2])
+plotQualityProfile(fnFs[1:2])
+```
+
+#Filter and trim
+
+```{r}
+filtFs <- file.path(path, "filtered", paste0(sample.names, "_F_filt.fastq.gz"))
+filtRs <- file.path(path, "filtered", paste0(sample.names, "_R_filt.fastq.gz"))
+names(filtFs) <- sample.names
+names(filtRs) <- sample.names
+```
+
+#etape de filtration de qualité
+```{r}
+out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs,trimLeft=c(18,18), truncLen=c(250,240),
+              maxN=0, maxEE=c(2,2), truncQ=2, rm.phix=TRUE,
+              compress=TRUE, multithread=TRUE)
+head(out)
+
+#il faut pas couper trop court pour pouvoir avoir une partie commune pour l'allignement , ici les séquences variables en tout font au moins 450
+#truncLen veut dire qu'on coupe à 240 et 190 (déterminé jusqu'à où le score de qualité est acceptable )sur le R1=forward et 240 sur le R2=reverse, faut bien regarder la longueur des fragments pour garder une superposition des deux lors de l'alignement (overlap) si on coupe trop court on en aura pas 
+#maxN=0 quand séquenceur sait pas quelle pb c'est il met un N, donc on dit que si il y a au moins 1 N dans la seq on l'enlève car sera de mauvaise qualité 
+#truncQ : a chaque fois que le long d'une sequence on voit apparaitre un score de qualié qui est inférieur à Q20 il coupe la séquence à ce niveau
+#Trimleft : enlever les amorces à gauches (18 premiers nucléotides)
+#filter and trim : fonction qui permet de faire la filtration quelité des séquences 
+#obtient read.in : nbr de séquences qu'il avait avant et read.out : nbr de séquences qu'il obtient après les avoir filtré
+```
+
+#dada2: calcul des erreurs de séquençage 
+#première étape : déréplication --> pour qu'il reste que les séquences uniques avec au bout le nombre de fois où elles apparaissaient 
+```{r}
+derepFs <- derepFastq(filtFs, verbose=TRUE)
+derepRs <- derepFastq(filtRs, verbose=TRUE)
+names(derepFs) <- sampleNames
+names(derepRs) <- sampleNames
+```
+
+
+#model d'erreur
+
+```{r}
+errFs <- learnErrors(filtFs, multithread=TRUE)
+errRs <- learnErrors(filtRs, multithread=TRUE)
+```
+
+```{r}
+plotErrors(errFs, nominalQ=TRUE)
+```
+
+```{r}
+plotErrors(errRs, nominalQ=TRUE)
+```
+
+#corriger les erreurs
+
+```{r}
+dadaFs <- dada(filtFs, err=errFs, multithread=TRUE)
+```
+
+```{r}
+dadaRs <- dada(filtRs, err=errRs, multithread=TRUE)
+```
+
+
+#faire l'allignement des R1 et R2
+```{r}
+mergers <- mergePairs(dadaFs, filtFs, dadaRs, filtRs, verbose=TRUE)
+head(mergers[[1]])
+```
+
+#créer table d'observation des séquences :
+```{r}
+seqtabAll <- makeSequenceTable(mergers[!grepl("Mock", names(mergers))])
+table(nchar(getSequences(seqtabAll)))
+#on importe toutes les séquences de la table sauf celle Mock (car est une séquence artificielle introduite pour vérifier que ça marche)
+#deuxième ligne = nombre de caractères 
+#troisième ligne = nombre de séquences qui ont ce nombre de caractères 
+#permet de vérifier que l'allignement est bien fait
+```
+
+#enlever les chimères = séquences avec un bout de séquence d'une bactérie et un bout d'une autre bactérie , se produit pendant la PCR lorsque l'ARNpol se décroche avant la fin 
+```{r}
+seqtab.nochim <- removeBimeraDenovo(seqtabAll, method="consensus", multithread=TRUE, verbose=TRUE)
+dim(seqtab.nochim)
+```
+
+```{r}
+sum(seqtab.nochim)/sum(seqtabAll)
+```
+
+#Track reads through the pipeline
+```{r}
+getN <- function(x) sum(getUniques(x))
+track <- cbind(out, sapply(dadaFs, getN), sapply(dadaRs, getN), sapply(mergers, getN), rowSums(seqtab.nochim))
+colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+rownames(track) <- sample.names
+head(track)
+```
+
+#annotation taxonomique
+```{bash}
+#1-télécharger fichier
+wget https://zenodo.org/record/4587955/files/silva_nr99_v138.1_train_set.fa.gz?download=1
+```
+
+```{r}
+#assigner taxo
+taxa <- assignTaxonomy(seqtab.nochim, "silva_nr99_v138.1_train_set.fa.gz?download=1", multithread=TRUE)
+```
+
+```{r}
+taxa.print <- taxa 
+rownames(taxa.print) <- NULL
+head(taxa.print)
+```
+
+```{bash}
+wget http://www2.decipher.codes/Classification/TrainingSets/SILVA_SSU_r138_2019.RData
+```
+
+
+```{r}
+dna <- DNAStringSet(getSequences(seqtab.nochim)) 
+load("SILVA_SSU_r138_2019.RData") 
+ids <- IdTaxa(dna, trainingSet, strand="top", processors=NULL, verbose=FALSE) 
+ranks <- c("domain", "phylum", "class", "order", "family", "genus", "species") 
+taxid <- t(sapply(ids, function(x) {
+        m <- match(ranks, x$rank)
+        taxa <- x$taxon[m]
+        taxa[startsWith(taxa, "unclassified_")] <- NA
+        taxa
+}))
+colnames(taxid) <- ranks; rownames(taxid) <- getSequences(seqtab.nochim)
+```
+
+```{r}
+theme_set(theme_bw())
+```
+
+```{r}
+samples.out <- rownames(seqtab.nochim)
+prof <- sapply(strsplit(samples.out, "_"), `[`, 2)
+s_prof <- substr(prof,1,1)
+day <- as.character(sapply(strsplit(samples.out, "_"), `[`, 3))
+samdf <- data.frame(prof=s_prof, Day=day)
+samdf$Mois <- "Septembre"
+samdf$Mois[samdf$Day > "10sept14"] <- "Mars"
+rownames(samdf) <- samples.out
+```
+
+
+```{r}
+ps <- phyloseq(otu_table(seqtab.nochim, taxa_are_rows=FALSE), 
+               sample_data(samdf), 
+               tax_table(taxa))
+```
+
+```{r}
+dna <- Biostrings::DNAStringSet(taxa_names(ps))
+names(dna) <- taxa_names(ps)
+ps <- merge_phyloseq(ps, dna)
+taxa_names(ps) <- paste0("ASV", seq(ntaxa(ps)))
+ps
+
+
+```
+
+```{r}
+plot_richness(ps, x="Mois", measures=c("Shannon", "Simpson"), color="prof")
+```
+
+```{r, include=FALSE}
+ps.prop <- transform_sample_counts(ps, function(otu) otu/sum(otu))
+ord.nmds.bray <- ordinate(ps.prop, method="PCoA", distance="bray")
+```
+
+```{r}
+plot_ordination(ps.prop, ord.nmds.bray, color="Mois", title="Bray NMDS")
+```
+
+```{r}
+top20 <- names(sort(taxa_sums(ps), decreasing=TRUE))[1:20]
+ps.top20 <- transform_sample_counts(ps, function(OTU) OTU/sum(OTU))
+ps.top20 <- prune_taxa(top20, ps.top20)
+plot_bar(ps.top20, x="Day", fill="Class") + facet_wrap(~Mois, scales="free_x")
+```
+
+```{r}
+top20 <- names(sort(taxa_sums(ps), decreasing=TRUE))[1:20]
+ps.top20 <- transform_sample_counts(ps, function(OTU) OTU/sum(OTU))
+ps.top20 <- prune_taxa(top20, ps.top20)
+plot_bar(ps.top20, x="prof", fill="Class") + facet_wrap(~Mois, scales="free_x")
+```
+ 
+ ##la profondeur à un impact sur les cyanobactéries qui sont moins abondantes comparé à médiant et surface, ce résultat est logique puisqu'elles sont photosynthétique et qu'il y a moins de photon lumineux qui atteignent cette profondeur. On à par contre un plus grande abondance relative d'alphaprotéobactérie, ce sont des chimiohétérotrophes donc ils puissent leur énergie de l'oxydation des composés organiques ainsi ils se développent mieux en profondeur puique la matière organique y tombe.
+L'alpha diveristé qui permet de mesurer toutes les mesures qui s'appliquent à une communauté. On à une alpha diversité plus élevée en profondeur qu'en surface et qu'en médiant donc la profondeur permet un nombre d'espèce plus élevé. 
+
+La saison à également un impact sur ces communautés, en effet en Septembre il y a une augmentation de l'abondance globale par rapport à Mars que l'on peut voir sur le premier plot comparant uniquement l'abondance en fonction des saisons, cela est confirmé par nos résultats de l'indice de Shannon. En septembre on à également une abondnace relative de certaines espèces qui augmente comme les alphaprotéobactéries. 
+
+Les deux facteurs ensemblent ont un effet sur nos communautés puisque en septembre et en profondeur on à une forte augmentation des gammaprotéobactéries , des bactéroidia et des acidimicrobia.
+
+
+
