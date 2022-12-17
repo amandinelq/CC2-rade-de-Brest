@@ -211,20 +211,21 @@ theme_set(theme_bw())
 
 ```{r}
 samples.out <- rownames(seqtab.nochim)
-station <- sapply(strsplit(samples.out, "_"), `[`, 2)
+Profondeur <- sapply(strsplit(samples.out, "_"), `[`, 2)
 
-profondeur <- substr(station,1,1)
+s_prof <- substr(Profondeur,1,1)
 day <- as.character(sapply(strsplit(samples.out, "_"), `[`, 3))
 
+samdf <- data.frame(Profondeur=s_prof, Jour=day)
 
-samdf <- data.frame(Profondeur=profondeur, Day=day)
 
-samdf$Saison <- "Ete"
-samdf$Saison[samdf$Day > "10sept14"] <- "Hiver"
+samdf$Mois <- "Septembre"
+samdf$Mois[samdf$Jour > "10sept14"] <- "Mars"
 
 rownames(samdf) <- samples.out
 print(samdf)
 ```
+
 
 
 ```{r}
