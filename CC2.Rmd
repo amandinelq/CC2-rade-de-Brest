@@ -98,16 +98,6 @@ head(out)
 #obtient read.in : nbr de séquences qu'il avait avant et read.out : nbr de séquences qu'il obtient après les avoir filtré
 ```
 
-#dada2: calcul des erreurs de séquençage 
-#première étape : déréplication --> pour qu'il reste que les séquences uniques avec au bout le nombre de fois où elles apparaissaient 
-```{r}
-derepFs <- derepFastq(filtFs, verbose=TRUE)
-derepRs <- derepFastq(filtRs, verbose=TRUE)
-names(derepFs) <- sampleNames
-names(derepRs) <- sampleNames
-```
-
-
 #model d'erreur
 
 ```{r}
@@ -245,7 +235,7 @@ ps
 ```
 
 ```{r}
-plot_richness(ps, x="Mois", measures=c("Shannon", "Simpson"), color="prof")
+plot_richness(ps, x="Mois", measures=c("Shannon", "Simpson"), color="Profondeur")
 ```
 
 ```{r, include=FALSE}
@@ -254,21 +244,30 @@ ord.nmds.bray <- ordinate(ps.prop, method="PCoA", distance="bray")
 ```
 
 ```{r}
-plot_ordination(ps.prop, ord.nmds.bray, color="Mois", title="Bray NMDS")
+plot_ordination(ps.prop, ord.nmds.bray, color="Profondeur", title="Bray PCoA", shape="Jour")
+```
+
+```{r, include=FALSE}
+ps.prop2 <- transform_sample_counts(ps, function(otu) otu/sum(otu))
+ord.nmds.bray2 <- ordinate(ps.prop, method="PCoA", distance="jaccard")
+```
+
+```{r}
+plot_ordination(ps.prop2, ord.nmds.bray2, color="Profondeur", title="Jaccard PCoA", shape="Jour")
 ```
 
 ```{r}
 top20 <- names(sort(taxa_sums(ps), decreasing=TRUE))[1:20]
 ps.top20 <- transform_sample_counts(ps, function(OTU) OTU/sum(OTU))
 ps.top20 <- prune_taxa(top20, ps.top20)
-plot_bar(ps.top20, x="Day", fill="Class") + facet_wrap(~Mois, scales="free_x")
+plot_bar(ps.top20, x="Jour", fill="Class") + facet_wrap(~Mois, scales="free_x")
 ```
 
 ```{r}
 top20 <- names(sort(taxa_sums(ps), decreasing=TRUE))[1:20]
 ps.top20 <- transform_sample_counts(ps, function(OTU) OTU/sum(OTU))
 ps.top20 <- prune_taxa(top20, ps.top20)
-plot_bar(ps.top20, x="prof", fill="Class") + facet_wrap(~Mois, scales="free_x")
+plot_bar(ps.top20, x="Profondeur", fill="Class") + facet_wrap(~Mois, scales="free_x")
 ```
  
  ##la profondeur à un impact sur les cyanobactéries qui sont moins abondantes comparé à médiant et surface, ce résultat est logique puisqu'elles sont photosynthétique et qu'il y a moins de photon lumineux qui atteignent cette profondeur. On à par contre un plus grande abondance relative d'alphaprotéobactérie, ce sont des chimiohétérotrophes donc ils puissent leur énergie de l'oxydation des composés organiques ainsi ils se développent mieux en profondeur puique la matière organique y tombe.
